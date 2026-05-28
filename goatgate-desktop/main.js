@@ -405,7 +405,7 @@ async function takeScreenshot(title, developer, windowTitle) {
   try {
     // Capture exactly 1 frame from ddagrab instantly
     const ddaInput = windowTitle ? `ddagrab=window_title=${windowTitle}` : 'ddagrab';
-    execSync(`ffmpeg -f lavfi -i "${ddaInput}" -vf "hwdownload,format=bgra" -frames:v 1 -y "${outputPath}"`);
+    execSync(`ffmpeg -f lavfi -i "${ddaInput}" -vf "hwdownload,format=bgra" -update 1 -frames:v 1 -y "${outputPath}"`);
     console.log('[SCREENSHOT] Written to:', outputPath);
 
     // Upload
