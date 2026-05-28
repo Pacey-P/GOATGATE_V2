@@ -76,6 +76,10 @@ export function getDb() {
           clip.sessionId = null;
           migrated = true;
         }
+        if (clip.isArchived === undefined) {
+          clip.isArchived = false;
+          migrated = true;
+        }
       });
     }
     if (data.screenshots) {
@@ -90,6 +94,10 @@ export function getDb() {
         }
         if (snap.sessionId === undefined) {
           snap.sessionId = null;
+          migrated = true;
+        }
+        if (snap.isArchived === undefined) {
+          snap.isArchived = false;
           migrated = true;
         }
       });
@@ -302,6 +310,84 @@ export function getChatMessages(gateCode) {
   const db = getDb();
   const code = gateCode.toUpperCase();
   return db.chatRooms[code] || [];
+}
+
+export function deleteMediaItem(mediaId, mediaType) {
+  const db = getDb();
+  let found = null;
+  let index = -1;
+  
+  if (mediaType === 'video' || mediaType === 'clip' || mediaType === 'dvr') {
+    index = db.clips.findIndex(c => c.id === mediaId);
+    if (index !== -1) {
+      found = db.clips[index];
+      db.clips.splice(index, 1);
+    }
+  } else if (mediaType === 'image' || mediaType === 'screenshot') {
+    index = db.screenshots.findIndex(s => s.id === mediaId);
+    if (index !== -1) {
+      found = db.screenshots[index];
+      db.screenshots.splice(index, 1);
+    }
+  }
+  
+  if (found) {
+    writeData(db);
+    return found;
+  }
+  return null;
+}
+
+export function archiveMediaItem(mediaId, mediaType, shouldArchive) {
+  const db = getDb();
+  let found = null;
+  if (mediaType === 'video' || mediaType === 'clip' || mediaType === 'dvr') {
+    found = db.clips.find(c => c.id === mediaId);
+  } else if (mediaType === 'image' || mediaType === 'screenshot') {
+    found = db.screenshots.find(s => s.id === mediaId);
+  }
+  
+  if (found) {
+    found.isArchived = shouldArchive;
+    writeData(db);
+    return found;
+  }
+  return null;
+}
+
+export function upgradeGuestUser(guestToken, authenticatedUserId) {
+  const db = getDb();
+  let upgradedCount = 0;
+  
+  // Upgrade devlog sessions
+  for (const id of Object.keys(db.devlogSessions)) {
+    if (db.devlogSessions[id].userId === guestToken) {
+      db.devlogSessions[id].userId = authenticatedUserId;
+      upgradedCount++;
+    }
+  }
+  
+  // Upgrade clips
+  db.clips.forEach(clip => {
+    if (clip.userId === guestToken) {
+      clip.userId = authenticatedUserId;
+      upgradedCount++;
+    }
+  });
+  
+  // Upgrade screenshots
+  db.screenshots.forEach(snap => {
+    if (snap.userId === guestToken) {
+      snap.userId = authenticatedUserId;
+      upgradedCount++;
+    }
+  });
+  
+  if (upgradedCount > 0) {
+    writeData(db);
+    console.log(`[DB] Upgraded ${upgradedCount} guest items from ${guestToken} to ${authenticatedUserId}`);
+  }
+  return upgradedCount;
 }
 
 // Reset live states on startup/module load

@@ -28,6 +28,37 @@ const viewerDpadStates = new Map(); // viewerId -> { up, down, left, right }
 const API_SERVER = 'http://localhost:3001';
 const TEMP_DIR = path.join(app.getPath('temp'), 'goatgate');
 
+const CONFIG_FILE = path.join(app.getPath('userData'), 'config.json');
+let guestToken = null;
+
+function loadOrGenerateGuestToken() {
+  try {
+    if (fs.existsSync(CONFIG_FILE)) {
+      const config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+      if (config.guestToken) {
+        guestToken = config.guestToken;
+        console.log(`[AUTH] Loaded guest token: ${guestToken}`);
+        return;
+      }
+    }
+  } catch (err) {
+    console.error('Failed to load guest token config:', err);
+  }
+  
+  const crypto = require('crypto');
+  guestToken = 'guest_' + crypto.randomUUID();
+  try {
+    const parentDir = path.dirname(CONFIG_FILE);
+    if (!fs.existsSync(parentDir)) {
+      fs.mkdirSync(parentDir, { recursive: true });
+    }
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify({ guestToken }, null, 2), 'utf8');
+    console.log(`[AUTH] Generated and saved new guest token: ${guestToken}`);
+  } catch (err) {
+    console.error('Failed to save guest token config:', err);
+  }
+}
+
 let authToken = null;
 let loggedInUser = null;
 let activeSessionId = null;
@@ -546,6 +577,10 @@ function registerGlobalHotkeys() {
 
 // Lifecycle Handlers
 app.whenReady().then(() => {
+  loadOrGenerateGuestToken();
+  if (!authToken) {
+    authToken = guestToken;
+  }
   runDiagnostics();
   createWindow();
   registerGlobalHotkeys();
@@ -722,7 +757,8 @@ ipcMain.on('get-state', (event) => {
     authToken,
     loggedInUser,
     activeSessionId,
-    appMode
+    appMode,
+    guestToken
   });
 });
 
@@ -733,12 +769,12 @@ ipcMain.on('start-login', () => {
 });
 
 ipcMain.on('logout', () => {
-  authToken = null;
+  authToken = guestToken;
   loggedInUser = null;
   activeSessionId = null;
   if (mainWindow) {
     mainWindow.webContents.send('logout-success');
-    mainWindow.webContents.send('log-message', 'Logged out.');
+    mainWindow.webContents.send('log-message', 'Logged out. Reverted to Guest Sandbox.');
   }
 });
 

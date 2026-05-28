@@ -54,9 +54,15 @@ function optionalAuthenticateToken(req, res, next) {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
   if (token) {
-    const userPayload = verifyToken(token);
-    if (userPayload) {
-      req.userId = userPayload.userId;
+    if (token.startsWith('guest_')) {
+      req.userId = token;
+      req.isGuest = true;
+    } else {
+      const userPayload = verifyToken(token);
+      if (userPayload) {
+        req.userId = userPayload.userId;
+        req.isGuest = false;
+      }
     }
   }
   next();
@@ -68,11 +74,19 @@ function authenticateToken(req, res, next) {
   if (!token) {
     return res.status(401).json({ error: 'Access token missing' });
   }
+  
+  if (token.startsWith('guest_')) {
+    req.userId = token;
+    req.isGuest = true;
+    return next();
+  }
+  
   const userPayload = verifyToken(token);
   if (!userPayload) {
     return res.status(403).json({ error: 'Invalid or expired token' });
   }
   req.userId = userPayload.userId;
+  req.isGuest = false;
   next();
 }
 
@@ -155,7 +169,8 @@ app.post('/api/clips', optionalAuthenticateToken, upload.single('clip'), (req, r
     tags: req.body.tags ? JSON.parse(req.body.tags) : ['Game Dev'],
     userId,
     sessionId,
-    isPublic
+    isPublic,
+    isArchived: false
   };
   
   db.saveClip(newClip);
@@ -205,7 +220,8 @@ app.post('/api/screenshots', optionalAuthenticateToken, upload.single('screensho
     tags: req.body.tags ? JSON.parse(req.body.tags) : ['Screenshot'],
     userId,
     sessionId,
-    isPublic
+    isPublic,
+    isArchived: false
   };
   
   db.saveScreenshot(newScreenshot);
@@ -343,6 +359,25 @@ app.post('/api/feed/publish', authenticateToken, (req, res) => {
   if (!mediaId || !mediaType) {
     return res.status(400).json({ error: 'Missing mediaId or mediaType' });
   }
+  
+  let existing = null;
+  if (mediaType === 'video' || mediaType === 'clip' || mediaType === 'dvr') {
+    existing = db.getClips().find(c => c.id === mediaId);
+  } else {
+    existing = db.getScreenshots().find(s => s.id === mediaId);
+  }
+  
+  if (!existing) {
+    return res.status(404).json({ error: 'Media item not found' });
+  }
+  
+  if (existing.userId !== req.userId && existing.developer !== req.userId) {
+    const user = db.getUser(req.userId);
+    if (!user || user.name !== existing.developer) {
+      return res.status(403).json({ error: 'Unauthorized to publish this media item' });
+    }
+  }
+
   const updated = db.publishToGoatFeed(mediaId, mediaType);
   if (updated) {
     broadcastToAll({
@@ -351,7 +386,7 @@ app.post('/api/feed/publish', authenticateToken, (req, res) => {
     });
     res.json({ success: true, media: updated });
   } else {
-    res.status(404).json({ error: 'Media item not found' });
+    res.status(500).json({ error: 'Failed to publish media item' });
   }
 });
 
@@ -401,7 +436,100 @@ app.post('/api/socials/publish', authenticateToken, publishRateLimiter, async (r
     res.status(500).json({ error: `Internal Server Error: ${err.message}` });
   }
 });
+// Upgrade guest account to registered Google account
+app.post('/api/auth/upgrade-guest', authenticateToken, (req, res) => {
+  const { guestToken } = req.body;
+  if (!guestToken) {
+    return res.status(400).json({ error: 'guestToken is required' });
+  }
+  if (req.isGuest) {
+    return res.status(400).json({ error: 'Cannot upgrade a guest to another guest' });
+  }
+  const upgradedCount = db.upgradeGuestUser(guestToken, req.userId);
+  res.json({ success: true, upgradedCount });
+});
 
+// Delete media item (and remove its file from disk)
+app.delete('/api/media/:mediaId', authenticateToken, (req, res) => {
+  const { mediaId } = req.params;
+  const { mediaType } = req.query;
+  
+  if (!mediaId || !mediaType) {
+    return res.status(400).json({ error: 'Missing mediaId or mediaType' });
+  }
+  
+  let existing = null;
+  if (mediaType === 'video' || mediaType === 'clip' || mediaType === 'dvr') {
+    existing = db.getClips().find(c => c.id === mediaId);
+  } else {
+    existing = db.getScreenshots().find(s => s.id === mediaId);
+  }
+  
+  if (!existing) {
+    return res.status(404).json({ error: 'Media item not found' });
+  }
+  
+  if (existing.userId !== req.userId && existing.developer !== req.userId) {
+    const user = db.getUser(req.userId);
+    if (!user || user.name !== existing.developer) {
+      return res.status(403).json({ error: 'Unauthorized to delete this media item' });
+    }
+  }
+  
+  const deleted = db.deleteMediaItem(mediaId, mediaType);
+  if (deleted) {
+    const filename = deleted.filename;
+    if (filename) {
+      const filePath = path.join(UPLOADS_DIR, filename);
+      if (fs.existsSync(filePath)) {
+        try {
+          fs.unlinkSync(filePath);
+          console.log(`[FILE] Deleted file from disk: ${filePath}`);
+        } catch (err) {
+          console.error(`[FILE] Failed to delete file: ${filePath}`, err);
+        }
+      }
+    }
+    res.json({ success: true });
+  } else {
+    res.status(500).json({ error: 'Failed to delete media item' });
+  }
+});
+
+// Archive or unarchive media item
+app.post('/api/media/:mediaId/archive', authenticateToken, (req, res) => {
+  const { mediaId } = req.params;
+  const { mediaType, shouldArchive } = req.body;
+  
+  if (!mediaId || !mediaType || shouldArchive === undefined) {
+    return res.status(400).json({ error: 'Missing required parameters: mediaId, mediaType, shouldArchive' });
+  }
+  
+  let existing = null;
+  if (mediaType === 'video' || mediaType === 'clip' || mediaType === 'dvr') {
+    existing = db.getClips().find(c => c.id === mediaId);
+  } else {
+    existing = db.getScreenshots().find(s => s.id === mediaId);
+  }
+  
+  if (!existing) {
+    return res.status(404).json({ error: 'Media item not found' });
+  }
+  
+  if (existing.userId !== req.userId) {
+    const user = db.getUser(req.userId);
+    if (!user || user.name !== existing.developer) {
+      return res.status(403).json({ error: 'Unauthorized to archive this media item' });
+    }
+  }
+  
+  const updated = db.archiveMediaItem(mediaId, mediaType, shouldArchive === 'true' || shouldArchive === true);
+  if (updated) {
+    res.json({ success: true, media: updated });
+  } else {
+    res.status(500).json({ error: 'Failed to archive media item' });
+  }
+});
 // Get all active streams/gates
 app.get('/api/gates/live', (req, res) => {
   res.json(db.getLiveGates());

@@ -409,36 +409,30 @@ ipcRenderer.on('state-updated', (event, state) => {
     userInfo.style.display = 'flex';
     userName.innerText = state.loggedInUser.name;
     sessionLoginWarning.style.display = 'none';
-    
-    if (state.activeSessionId) {
-      sessionStatusBadge.innerText = 'ACTIVE';
-      sessionStatusBadge.style.background = 'rgba(34, 197, 94, 0.15)';
-      sessionStatusBadge.style.borderColor = 'rgba(34, 197, 94, 0.4)';
-      sessionStatusBadge.style.color = '#4ade80';
-      
-      activeSessionBanner.style.display = 'flex';
-      activeSessionTitle.innerText = state.activeSessionTitle || `Devlog Session`;
-      sessionControls.style.display = 'none';
-    } else {
-      sessionStatusBadge.innerText = 'NO ACTIVE SESSION';
-      sessionStatusBadge.style.background = 'rgba(239, 68, 68, 0.1)';
-      sessionStatusBadge.style.borderColor = 'rgba(239, 68, 68, 0.3)';
-      sessionStatusBadge.style.color = '#f87171';
-      
-      activeSessionBanner.style.display = 'none';
-      sessionControls.style.display = 'flex';
-    }
   } else {
     btnLogin.style.display = 'block';
     userInfo.style.display = 'none';
     sessionLoginWarning.style.display = 'block';
-    sessionControls.style.display = 'none';
-    activeSessionBanner.style.display = 'none';
+    sessionLoginWarning.innerHTML = `⚠️ <strong>Guest Sandbox Mode:</strong> Sign in with Google to sync your devlog sessions across devices.`;
+  }
+
+  if (state.activeSessionId) {
+    sessionStatusBadge.innerText = 'ACTIVE';
+    sessionStatusBadge.style.background = 'rgba(34, 197, 94, 0.15)';
+    sessionStatusBadge.style.borderColor = 'rgba(34, 197, 94, 0.4)';
+    sessionStatusBadge.style.color = '#4ade80';
     
+    activeSessionBanner.style.display = 'flex';
+    activeSessionTitle.innerText = state.activeSessionTitle || `Devlog Session`;
+    sessionControls.style.display = 'none';
+  } else {
     sessionStatusBadge.innerText = 'NO ACTIVE SESSION';
     sessionStatusBadge.style.background = 'rgba(239, 68, 68, 0.1)';
     sessionStatusBadge.style.borderColor = 'rgba(239, 68, 68, 0.3)';
     sessionStatusBadge.style.color = '#f87171';
+    
+    activeSessionBanner.style.display = 'none';
+    sessionControls.style.display = 'flex';
   }
 
   // Diagnostics info

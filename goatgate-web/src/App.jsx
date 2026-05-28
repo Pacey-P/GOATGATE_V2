@@ -7,7 +7,17 @@ export default function App() {
   const [username, setUsername] = useState('');
 
   // Authentication State
-  const [token, setToken] = useState(localStorage.getItem('gg_token') || null);
+  const [token, setToken] = useState(() => {
+    const existingToken = localStorage.getItem('gg_token');
+    if (existingToken) return existingToken;
+    
+    let guestToken = localStorage.getItem('gg_guest_token');
+    if (!guestToken) {
+      guestToken = 'guest_' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+      localStorage.setItem('gg_guest_token', guestToken);
+    }
+    return guestToken;
+  });
   const [user, setUser] = useState(localStorage.getItem('gg_user') ? JSON.parse(localStorage.getItem('gg_user')) : null);
   const [outstandKey, setOutstandKey] = useState('');
   const [devlogSessions, setDevlogSessions] = useState([]);
@@ -31,6 +41,7 @@ export default function App() {
   // UI inputs
   const [chatInput, setChatInput] = useState('');
   const [currentTab, setCurrentTab] = useState('all');
+  const [showArchived, setShowArchived] = useState(false);
   const [activeMedia, setActiveMedia] = useState(null);
   const [errorMessage, setErrorMessage] = useState('');
   const [rightPanelTab, setRightPanelTab] = useState('chat');
@@ -75,24 +86,50 @@ export default function App() {
       setUser(parsedUser);
       setOutstandKey(parsedUser.outstandApiKey || '');
       
+      const guestToken = localStorage.getItem('gg_guest_token');
+      if (guestToken) {
+        fetch('/api/auth/upgrade-guest', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${urlToken}`
+          },
+          body: JSON.stringify({ guestToken })
+        })
+        .then(res => res.json())
+        .then(data => {
+          console.log('[AUTH] Upgraded guest data:', data);
+          localStorage.removeItem('gg_guest_token');
+          // Refresh devlogs and media using the new token
+          fetchDevlogs(urlToken);
+          fetchUserMedia(urlToken);
+        })
+        .catch(err => console.error('Failed to upgrade guest:', err));
+      }
+      
       window.history.replaceState({}, document.title, window.location.pathname);
     }
   }, []);
 
-  // Fetch private sessions and media when user logged in
+  // Fetch private sessions and media when user or token changes
   useEffect(() => {
-    if (user && token) {
-      setOutstandKey(user.outstandApiKey || '');
-      fetchDevlogs();
-      fetchUserMedia();
+    if (token) {
+      if (user) {
+        setOutstandKey(user.outstandApiKey || '');
+      } else {
+        setOutstandKey('');
+      }
+      fetchDevlogs(token);
+      fetchUserMedia(token);
     }
   }, [user, token]);
 
-  const fetchDevlogs = async () => {
-    if (!token) return;
+  const fetchDevlogs = async (overrideToken) => {
+    const activeToken = overrideToken || token;
+    if (!activeToken) return;
     try {
       const res = await fetch('/api/devlogs', {
-        headers: { 'Authorization': `Bearer ${token}` }
+        headers: { 'Authorization': `Bearer ${activeToken}` }
       });
       const data = await res.json();
       setDevlogSessions(data);
@@ -101,11 +138,12 @@ export default function App() {
     }
   };
 
-  const fetchUserMedia = async () => {
-    if (!token) return;
+  const fetchUserMedia = async (overrideToken) => {
+    const activeToken = overrideToken || token;
+    if (!activeToken) return;
     try {
       const res = await fetch('/api/devlogs/media', {
-        headers: { 'Authorization': `Bearer ${token}` }
+        headers: { 'Authorization': `Bearer ${activeToken}` }
       });
       const data = await res.json();
       setUserMedia(data);
@@ -182,6 +220,70 @@ export default function App() {
       }
     } catch (err) {
       console.error('Error sharing to socials:', err);
+    }
+  };
+
+  const handleToggleArchive = async () => {
+    if (!activeMedia || !token) return;
+    const mediaType = activeMedia.mediaType || (activeMedia.url.endsWith('.mp4') ? 'video' : 'image');
+    const shouldArchive = !activeMedia.isArchived;
+    
+    try {
+      const res = await fetch(`/api/media/${activeMedia.id}/archive`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ mediaType, shouldArchive })
+      });
+      
+      if (res.ok) {
+        setActiveMedia(prev => ({ ...prev, isArchived: shouldArchive }));
+        setUserMedia(prev => prev.map(m => m.id === activeMedia.id ? { ...m, isArchived: shouldArchive } : m));
+        if (mediaType === 'video') {
+          setClips(prev => prev.map(c => c.id === activeMedia.id ? { ...c, isArchived: shouldArchive } : c));
+        } else {
+          setScreenshots(prev => prev.map(s => s.id === activeMedia.id ? { ...s, isArchived: shouldArchive } : s));
+        }
+      } else {
+        const data = await res.json();
+        alert(data.error || 'Failed to archive media item');
+      }
+    } catch (err) {
+      console.error('Error archiving media:', err);
+    }
+  };
+
+  const handleDeleteMedia = async () => {
+    if (!activeMedia || !token) return;
+    if (!confirm('Are you sure you want to delete this capture? This will permanently delete the file and cannot be undone.')) {
+      return;
+    }
+    const mediaType = activeMedia.mediaType || (activeMedia.url.endsWith('.mp4') ? 'video' : 'image');
+    
+    try {
+      const res = await fetch(`/api/media/${activeMedia.id}?mediaType=${mediaType}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      
+      if (res.ok) {
+        setUserMedia(prev => prev.filter(m => m.id !== activeMedia.id));
+        if (mediaType === 'video') {
+          setClips(prev => prev.filter(c => c.id !== activeMedia.id));
+        } else {
+          setScreenshots(prev => prev.filter(s => s.id !== activeMedia.id));
+        }
+        setActiveMedia(null);
+      } else {
+        const data = await res.json();
+        alert(data.error || 'Failed to delete media item');
+      }
+    } catch (err) {
+      console.error('Error deleting media:', err);
     }
   };
 
@@ -622,19 +724,36 @@ export default function App() {
       ...clips.map(c => ({ ...c, mediaType: 'video' })),
       ...screenshots.map(s => ({ ...s, mediaType: 'image' }))
     ];
-    combined.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    const activeItems = combined.filter(m => !m.isArchived);
+    activeItems.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
     if (currentTab === 'clips') {
-      return combined.filter(m => m.mediaType === 'video');
+      return activeItems.filter(m => m.mediaType === 'video');
     }
     if (currentTab === 'screenshots') {
-      return combined.filter(m => m.mediaType === 'image');
+      return activeItems.filter(m => m.mediaType === 'image');
     }
-    return combined;
+    return activeItems;
+  };
+
+  const getFilteredUserMedia = () => {
+    let filtered = userMedia;
+    if (activeSession) {
+      filtered = filtered.filter(m => m.sessionId === activeSession);
+    }
+    if (!showArchived) {
+      filtered = filtered.filter(m => !m.isArchived);
+    }
+    return filtered;
   };
 
   const filteredMedia = getFilteredMedia();
+  const filteredUserMedia = getFilteredUserMedia();
   const liveGatesList = Object.entries(liveGates);
+  const isOwnerOfActiveMedia = activeMedia && token && (
+    activeMedia.userId === token ||
+    (user && (activeMedia.userId === user.id || activeMedia.developer === user.name))
+  );
 
   return (
     <div className="app-container">
@@ -677,7 +796,13 @@ export default function App() {
                       localStorage.removeItem('gg_token');
                       localStorage.removeItem('gg_user');
                       setUser(null);
-                      setToken(null);
+                      
+                      let guestToken = localStorage.getItem('gg_guest_token');
+                      if (!guestToken) {
+                        guestToken = 'guest_' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+                        localStorage.setItem('gg_guest_token', guestToken);
+                      }
+                      setToken(guestToken);
                       setLobbyView('feed');
                     }}
                     className="tab-btn"
@@ -708,7 +833,7 @@ export default function App() {
           <div style={{ display: 'flex', gap: '1.5rem', borderBottom: '1px solid var(--border-muted)', paddingBottom: '0.75rem', marginBottom: '2rem', justifyContent: 'flex-start' }}>
             <button onClick={() => setLobbyView('feed')} style={{ background: 'none', border: 'none', color: lobbyView === 'feed' ? 'var(--cyan-accent)' : 'var(--text-secondary)', fontWeight: 700, fontSize: '1.1rem', cursor: 'pointer', borderBottom: lobbyView === 'feed' ? '2px solid var(--cyan-accent)' : 'none', paddingBottom: '0.5rem', outline: 'none' }}>GoatFeed</button>
             <button onClick={() => setLobbyView('live')} style={{ background: 'none', border: 'none', color: lobbyView === 'live' ? 'var(--cyan-accent)' : 'var(--text-secondary)', fontWeight: 700, fontSize: '1.1rem', cursor: 'pointer', borderBottom: lobbyView === 'live' ? '2px solid var(--cyan-accent)' : 'none', paddingBottom: '0.5rem', outline: 'none' }}>Live Gates</button>
-            {user && (
+            {token && (
               <button onClick={() => setLobbyView('devlogs')} style={{ background: 'none', border: 'none', color: lobbyView === 'devlogs' ? 'var(--cyan-accent)' : 'var(--text-secondary)', fontWeight: 700, fontSize: '1.1rem', cursor: 'pointer', borderBottom: lobbyView === 'devlogs' ? '2px solid var(--cyan-accent)' : 'none', paddingBottom: '0.5rem', outline: 'none' }}>My Devlogs</button>
             )}
           </div>
@@ -842,68 +967,114 @@ export default function App() {
           )}
 
           {/* Tab 3: Creator Dashboard & Devlog Sessions list */}
-          {lobbyView === 'devlogs' && user && (
-            <div style={{ display: 'grid', gridTemplateColumns: '280px 1fr', gap: '2rem', marginTop: '1rem', alignItems: 'start' }}>
-              {/* Sidebar Settings and Sessions */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-                {/* Outstand key configuration */}
-                <div className="glass-panel" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                  <h4 style={{ fontWeight: 700, margin: 0, textTransform: 'uppercase', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Outstand.so Setup</h4>
-                  <p style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.4 }}>Paste your unified Outstand API Key to share clips/snaps with 1-click.</p>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                    <input
-                      type="password"
-                      placeholder="Outstand API Key..."
-                      value={outstandKey}
-                      onChange={(e) => setOutstandKey(e.target.value)}
-                      className="chat-input"
-                      style={{ padding: '0.4rem 0.6rem', fontSize: '0.85rem', width: '100%', boxSizing: 'border-box' }}
-                    />
-                    <button onClick={saveOutstandKey} className="chat-submit" style={{ fontSize: '0.8rem', padding: '0.4rem 0.8rem', width: '100%' }}>
-                      Save Key
-                    </button>
-                  </div>
-                </div>
-
-                {/* Devlog Sessions */}
-                <div className="glass-panel" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                  <h4 style={{ fontWeight: 700, margin: 0, textTransform: 'uppercase', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Devlog Sessions</h4>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', maxHeight: '350px', overflowY: 'auto' }}>
-                    <button 
-                      onClick={() => setActiveSession(null)} 
-                      className="tab-btn"
-                      style={{ width: '100%', textAlign: 'left', padding: '0.5rem', background: activeSession === null ? 'rgba(139,92,246,0.15)' : 'transparent', border: activeSession === null ? '1px solid var(--purple-accent)' : '1px solid var(--border-muted)', borderRadius: '6px', cursor: 'pointer', color: 'white', fontWeight: 600, fontSize: '0.85rem' }}
-                    >
-                      All Private Captures
-                    </button>
-                    {devlogSessions.map(sess => (
-                      <button 
-                        key={sess.id}
-                        onClick={() => setActiveSession(sess.id)}
-                        className="tab-btn"
-                        style={{ width: '100%', textAlign: 'left', padding: '0.5rem', background: activeSession === sess.id ? 'rgba(139,92,246,0.15)' : 'transparent', border: activeSession === sess.id ? '1px solid var(--purple-accent)' : '1px solid var(--border-muted)', borderRadius: '6px', cursor: 'pointer', color: 'white', fontSize: '0.85rem' }}
-                      >
-                        <div style={{ fontWeight: 700 }}>{sess.title}</div>
-                        <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: '2px' }}>{new Date(sess.createdAt).toLocaleDateString()}</div>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              {/* Main Media Grid */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-                <h3 style={{ fontSize: '1.3rem', fontWeight: 600, margin: 0 }}>
-                  {activeSession ? `Devlog Session Media` : 'All Private Devlogs'}
-                </h3>
-                
-                <div className="media-grid">
-                  {(activeSession ? userMedia.filter(m => m.sessionId === activeSession) : userMedia).length === 0 ? (
-                    <div className="empty-state" style={{ gridColumn: '1/-1', padding: '4rem 2rem' }}>
-                      <p>No captures in this scope yet. Capture some clips or screenshots in Solo Mode.</p>
+          {lobbyView === 'devlogs' && token && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', marginTop: '1rem' }}>
+              {/* Sync Account Prompt for Guest Sandbox */}
+              {(!user || token.startsWith('guest_')) && (
+                <div style={{
+                  background: 'rgba(251, 191, 36, 0.1)',
+                  border: '1px solid rgba(251, 191, 36, 0.3)',
+                  borderRadius: '12px',
+                  padding: '1rem 1.5rem',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  gap: '1rem',
+                  boxShadow: '0 4px 12px rgba(0,0,0,0.1)'
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                    <span style={{ fontSize: '1.5rem' }}>⚠️</span>
+                    <div>
+                      <strong style={{ color: '#fbbf24', fontSize: '0.95rem' }}>Guest Sandbox Mode</strong>
+                      <div style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', marginTop: '0.25rem' }}>
+                        Your devlog sessions and captures are stored locally. Sign in with Google to sync them across devices and unlock community publishing.
+                      </div>
                     </div>
-                  ) : (
-                    (activeSession ? userMedia.filter(m => m.sessionId === activeSession) : userMedia).map(item => (
+                  </div>
+                  <a 
+                    href="/api/auth/google?clientType=web" 
+                    className="chat-submit"
+                    style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '0.5rem 1rem', fontSize: '0.85rem', height: 'auto', borderRadius: '6px', whiteSpace: 'nowrap' }}
+                  >
+                    Sign In with Google
+                  </a>
+                </div>
+              )}
+
+              <div style={{ display: 'grid', gridTemplateColumns: '280px 1fr', gap: '2rem', alignItems: 'start' }}>
+                {/* Sidebar Settings and Sessions */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+                  {/* Outstand key configuration */}
+                  {user && (
+                    <div className="glass-panel" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                      <h4 style={{ fontWeight: 700, margin: 0, textTransform: 'uppercase', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Outstand.so Setup</h4>
+                      <p style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.4 }}>Paste your unified Outstand API Key to share clips/snaps with 1-click.</p>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                        <input
+                          type="password"
+                          placeholder="Outstand API Key..."
+                          value={outstandKey}
+                          onChange={(e) => setOutstandKey(e.target.value)}
+                          className="chat-input"
+                          style={{ padding: '0.4rem 0.6rem', fontSize: '0.85rem', width: '100%', boxSizing: 'border-box' }}
+                        />
+                        <button onClick={saveOutstandKey} className="chat-submit" style={{ fontSize: '0.8rem', padding: '0.4rem 0.8rem', width: '100%' }}>
+                          Save Key
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Devlog Sessions */}
+                  <div className="glass-panel" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                    <h4 style={{ fontWeight: 700, margin: 0, textTransform: 'uppercase', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Devlog Sessions</h4>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', maxHeight: '350px', overflowY: 'auto' }}>
+                      <button 
+                        onClick={() => setActiveSession(null)} 
+                        className="tab-btn"
+                        style={{ width: '100%', textAlign: 'left', padding: '0.5rem', background: activeSession === null ? 'rgba(139,92,246,0.15)' : 'transparent', border: activeSession === null ? '1px solid var(--purple-accent)' : '1px solid var(--border-muted)', borderRadius: '6px', cursor: 'pointer', color: 'white', fontWeight: 600, fontSize: '0.85rem' }}
+                      >
+                        All Private Captures
+                      </button>
+                      {devlogSessions.map(sess => (
+                        <button 
+                          key={sess.id}
+                          onClick={() => setActiveSession(sess.id)}
+                          className="tab-btn"
+                          style={{ width: '100%', textAlign: 'left', padding: '0.5rem', background: activeSession === sess.id ? 'rgba(139,92,246,0.15)' : 'transparent', border: activeSession === sess.id ? '1px solid var(--purple-accent)' : '1px solid var(--border-muted)', borderRadius: '6px', cursor: 'pointer', color: 'white', fontSize: '0.85rem' }}
+                        >
+                          <div style={{ fontWeight: 700 }}>{sess.title}</div>
+                          <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: '2px' }}>{new Date(sess.createdAt).toLocaleDateString()}</div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Main Media Grid */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <h3 style={{ fontSize: '1.3rem', fontWeight: 600, margin: 0 }}>
+                      {activeSession ? `Devlog Session Media` : 'All Private Devlogs'}
+                    </h3>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', cursor: 'pointer', color: 'var(--text-secondary)' }}>
+                      <input 
+                        type="checkbox" 
+                        checked={showArchived} 
+                        onChange={(e) => setShowArchived(e.target.checked)} 
+                        style={{ cursor: 'pointer' }}
+                      />
+                      Show Archived
+                    </label>
+                  </div>
+                  
+                  <div className="media-grid">
+                    {filteredUserMedia.length === 0 ? (
+                      <div className="empty-state" style={{ gridColumn: '1/-1', padding: '4rem 2rem' }}>
+                        <p>No captures in this scope yet. Capture some clips or screenshots in Solo Mode.</p>
+                      </div>
+                    ) : (
+                      filteredUserMedia.map(item => (
                       <div key={item.id} className="glass-panel media-card" onClick={() => setActiveMedia(item)} style={{ cursor: 'pointer' }}>
                         <div className="card-preview">
                           {item.mediaType === 'video' ? (
@@ -932,9 +1103,10 @@ export default function App() {
                 </div>
               </div>
             </div>
-          )}
-        </main>
-      ) : (
+          </div>
+        )}
+      </main>
+    ) : (
         /* View 2: Stream Gate Room */
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
           <div className="dashboard-grid">
@@ -1269,11 +1441,31 @@ export default function App() {
                 )}
               </div>
               <div className="modal-footer">
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <h2 style={{ fontFamily: 'var(--font-title)', fontSize: '1.4rem' }}>{activeMedia.title}</h2>
-                  <a href={activeMedia.url} download={activeMedia.filename} className="chat-submit" style={{ fontSize: '0.85rem', textDecoration: 'none' }}>
-                    Download Asset
-                  </a>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
+                  <h2 style={{ fontFamily: 'var(--font-title)', fontSize: '1.4rem', margin: 0 }}>{activeMedia.title}</h2>
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <a href={activeMedia.url} download={activeMedia.filename} className="chat-submit" style={{ fontSize: '0.85rem', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', height: '32px', padding: '0 0.75rem' }}>
+                      Download
+                    </a>
+                    {isOwnerOfActiveMedia && (
+                      <>
+                        <button 
+                          onClick={handleToggleArchive} 
+                          className="tab-btn" 
+                          style={{ fontSize: '0.85rem', padding: '0 0.75rem', height: '32px', background: 'rgba(255,255,255,0.05)', color: 'white', border: '1px solid var(--border-muted)', borderRadius: '6px', cursor: 'pointer' }}
+                        >
+                          {activeMedia.isArchived ? 'Unarchive' : 'Archive'}
+                        </button>
+                        <button 
+                          onClick={handleDeleteMedia} 
+                          className="tab-btn" 
+                          style={{ fontSize: '0.85rem', padding: '0 0.75rem', height: '32px', background: 'rgba(239, 68, 68, 0.1)', color: '#f87171', border: '1px solid rgba(239, 68, 68, 0.3)', borderRadius: '6px', cursor: 'pointer' }}
+                        >
+                          Delete
+                        </button>
+                      </>
+                    )}
+                  </div>
                 </div>
                 <div className="modal-desc">
                   Shared by <span style={{ color: 'var(--cyan-accent)', fontWeight: 600 }}>{activeMedia.developer}</span> on {new Date(activeMedia.createdAt).toLocaleString()}
@@ -1288,10 +1480,13 @@ export default function App() {
                   {activeMedia.isPublic && (
                     <span className="meta-pill" style={{ fontSize: '0.75rem', color: 'var(--cyan-accent)', borderColor: 'var(--border-cyan-glow)' }}>Public (GoatFeed)</span>
                   )}
+                  {activeMedia.isArchived && (
+                    <span className="meta-pill" style={{ fontSize: '0.75rem', color: '#fbbf24', borderColor: 'rgba(251,191,36,0.3)' }}>Archived</span>
+                  )}
                 </div>
 
                 {/* Outstand & GoatFeed Actions */}
-                {token && user && (activeMedia.userId === user.id || activeMedia.developer === user.name) && (
+                {isOwnerOfActiveMedia && (
                   <div style={{ borderTop: '1px solid var(--border-muted)', marginTop: '1.5rem', paddingTop: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem', width: '100%' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <h4 style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-primary)', margin: 0 }}>Publisher Console</h4>
@@ -1306,46 +1501,52 @@ export default function App() {
                       )}
                     </div>
                     
-                    {user.outstandApiKey ? (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', background: 'rgba(255,255,255,0.02)', padding: '0.75rem', borderRadius: '8px', border: '1px solid var(--border-muted)', width: '100%', boxSizing: 'border-box' }}>
-                        <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Share to Socials (via Outstand.so)</div>
-                        <textarea
-                          id="social-share-caption"
-                          placeholder="Type caption to share..."
-                          defaultValue={`Check out my latest progress on GOATGATE! ${activeMedia.title}`}
-                          className="chat-input"
-                          style={{ minHeight: '60px', padding: '0.4rem', fontSize: '0.85rem', width: '100%', resize: 'vertical', background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-muted)', borderRadius: '6px', color: 'white', outline: 'none', boxSizing: 'border-box' }}
-                        />
-                        <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', marginTop: '0.25rem', flexWrap: 'wrap' }}>
-                          <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Platforms:</span>
-                          {['twitter', 'linkedin', 'instagram', 'tiktok'].map(p => (
-                            <label key={p} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.75rem', cursor: 'pointer', color: 'var(--text-secondary)' }}>
-                              <input type="checkbox" defaultChecked={p === 'twitter'} value={p} className="social-platform-chk" />
-                              {p === 'twitter' ? 'X' : p}
-                            </label>
-                          ))}
+                    {user ? (
+                      user.outstandApiKey ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', background: 'rgba(255,255,255,0.02)', padding: '0.75rem', borderRadius: '8px', border: '1px solid var(--border-muted)', width: '100%', boxSizing: 'border-box' }}>
+                          <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Share to Socials (via Outstand.so)</div>
+                          <textarea
+                            id="social-share-caption"
+                            placeholder="Type caption to share..."
+                            defaultValue={`Check out my latest progress on GOATGATE! ${activeMedia.title}`}
+                            className="chat-input"
+                            style={{ minHeight: '60px', padding: '0.4rem', fontSize: '0.85rem', width: '100%', resize: 'vertical', background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-muted)', borderRadius: '6px', color: 'white', outline: 'none', boxSizing: 'border-box' }}
+                          />
+                          <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', marginTop: '0.25rem', flexWrap: 'wrap' }}>
+                            <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Platforms:</span>
+                            {['twitter', 'linkedin', 'instagram', 'tiktok'].map(p => (
+                              <label key={p} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.75rem', cursor: 'pointer', color: 'var(--text-secondary)' }}>
+                                <input type="checkbox" defaultChecked={p === 'twitter'} value={p} className="social-platform-chk" />
+                                {p === 'twitter' ? 'X' : p}
+                              </label>
+                            ))}
+                          </div>
+                          <button
+                            onClick={() => {
+                              const caption = document.getElementById('social-share-caption').value;
+                              const checkboxes = document.querySelectorAll('.social-platform-chk:checked');
+                              const platforms = Array.from(checkboxes).map(c => c.value);
+                              if (platforms.length === 0) {
+                                alert('Please select at least one platform.');
+                                return;
+                              }
+                              const absoluteMediaUrl = window.location.origin + activeMedia.url;
+                              shareToSocials(absoluteMediaUrl, caption, platforms);
+                            }}
+                            className="chat-submit"
+                            style={{ fontSize: '0.8rem', padding: '0.4rem', marginTop: '0.5rem', height: 'auto', width: 'auto', borderRadius: '6px', alignSelf: 'flex-start' }}
+                          >
+                            Publish to Socials
+                          </button>
                         </div>
-                        <button
-                          onClick={() => {
-                            const caption = document.getElementById('social-share-caption').value;
-                            const checkboxes = document.querySelectorAll('.social-platform-chk:checked');
-                            const platforms = Array.from(checkboxes).map(c => c.value);
-                            if (platforms.length === 0) {
-                              alert('Please select at least one platform.');
-                              return;
-                            }
-                            const absoluteMediaUrl = window.location.origin + activeMedia.url;
-                            shareToSocials(absoluteMediaUrl, caption, platforms);
-                          }}
-                          className="chat-submit"
-                          style={{ fontSize: '0.8rem', padding: '0.4rem', marginTop: '0.5rem', height: 'auto', width: 'auto', borderRadius: '6px', alignSelf: 'flex-start' }}
-                        >
-                          Publish to Socials
-                        </button>
-                      </div>
+                      ) : (
+                        <div style={{ fontSize: '0.75rem', color: '#fbbf24', background: 'rgba(245,158,11,0.05)', padding: '0.5rem', borderRadius: '6px', border: '1px solid rgba(245,158,11,0.2)' }}>
+                          ⚠️ Configure your **Outstand API Key** in *My Devlogs* to enable 1-click sharing to Twitter, Instagram, TikTok, etc.
+                        </div>
+                      )
                     ) : (
                       <div style={{ fontSize: '0.75rem', color: '#fbbf24', background: 'rgba(245,158,11,0.05)', padding: '0.5rem', borderRadius: '6px', border: '1px solid rgba(245,158,11,0.2)' }}>
-                        ⚠️ Configure your **Outstand API Key** in *My Devlogs* to enable 1-click sharing to Twitter, Instagram, TikTok, etc.
+                        ⚠️ Sign in with Google to enable unified sharing to Twitter, Instagram, TikTok, etc.
                       </div>
                     )}
                   </div>
