@@ -18,10 +18,57 @@
 
     <!-- Content -->
     <main class="app-main">
+      <!-- Mode & Auth Section -->
+      <section class="glass-panel" style="padding: 0.6rem 0.75rem; display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 0.5rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <div style="display: flex; gap: 2px; background: rgba(0,0,0,0.25); padding: 2px; border-radius: 6px; border: 1px solid var(--border-muted);">
+            <button id="btn-mode-social" class="btn active" style="width: auto; padding: 0.25rem 0.5rem; font-size: 0.7rem; border-radius: 4px; border: none; background: transparent; color: white; cursor: pointer; font-weight: 600;">Social Mode</button>
+            <button id="btn-mode-solo" class="btn" style="width: auto; padding: 0.25rem 0.5rem; font-size: 0.7rem; border-radius: 4px; border: none; background: transparent; color: var(--text-secondary); cursor: pointer;">Solo Mode</button>
+          </div>
+          
+          <div id="auth-panel">
+            <button id="btn-login" class="btn btn-primary" style="width: auto; padding: 0.25rem 0.5rem; font-size: 0.7rem; height: auto;">Sign in with Google</button>
+            <div id="user-info" style="display: none; align-items: center; gap: 0.5rem;">
+              <span id="user-name" style="font-size: 0.7rem; color: var(--text-primary); font-weight: 600;"></span>
+              <button id="btn-logout" style="background: none; border: none; color: var(--red-live); font-size: 0.7rem; cursor: pointer; text-decoration: underline;">Sign Out</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Solo Mode Devlog Session Card -->
+      <section class="glass-panel" id="solo-session-card" style="display: none; padding: 0.6rem 0.75rem; flex-direction: column; gap: 0.5rem; margin-bottom: 0.5rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <h3 style="margin: 0; font-size: 0.8rem; font-weight: 700; color: var(--text-primary); text-transform: uppercase; letter-spacing: 0.03em;">Devlog Session</h3>
+          <span class="badge" id="session-status-badge" style="background: rgba(239, 68, 68, 0.1); border-color: rgba(239, 68, 68, 0.3); color: #f87171;">NO ACTIVE SESSION</span>
+        </div>
+        
+        <!-- Not logged in warning -->
+        <div id="session-login-warning" style="background: rgba(245, 158, 11, 0.08); border: 1px dashed rgba(245, 158, 11, 0.4); padding: 0.45rem 0.6rem; border-radius: 6px; font-size: 0.7rem; color: #fbbf24; line-height: 1.35;">
+          Please sign in to start a private devlog session.
+        </div>
+        
+        <!-- Create session controls -->
+        <div id="session-controls" style="display: none; flex-direction: column; gap: 0.5rem;">
+          <div class="input-group" style="display: flex; flex-direction: column; gap: 2px;">
+            <label for="devlog-title" style="font-size: 0.65rem; color: var(--text-secondary); text-transform: uppercase; font-weight: 600;">Devlog Title (optional)</label>
+            <input type="text" id="devlog-title" placeholder="Devlog - YYYY-MM-DD - HH:MM" style="padding: 0.35rem 0.5rem; font-size: 0.8rem; background: rgba(0,0,0,0.2); border: 1px solid var(--border-muted); border-radius: 6px; color: white; outline: none;">
+          </div>
+          <button class="btn btn-primary" id="btn-start-session" style="height: 28px; font-size: 0.75rem; justify-content: center; width: 100%;">Start New Session</button>
+        </div>
+        
+        <!-- Active session banner -->
+        <div id="active-session-banner" class="glass-panel" style="display: none; background: rgba(139, 92, 246, 0.06); border: 1px solid var(--border-glow); padding: 0.45rem 0.6rem; border-radius: 6px; flex-direction: column; gap: 0.15rem;">
+          <span style="font-size: 0.65rem; color: var(--text-secondary); text-transform: uppercase; font-weight: 700; letter-spacing: 0.05em;">Active Session:</span>
+          <div id="active-session-title" style="font-size: 0.85rem; font-weight: 700; color: white; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"></div>
+          <button class="btn" id="btn-end-session" style="width: auto; padding: 0.15rem 0.35rem; font-size: 0.6rem; background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.3); color: #f87171; border-radius: 4px; align-self: flex-start; margin-top: 0.25rem; font-weight: 600; cursor: pointer;">END SESSION</button>
+        </div>
+      </section>
+
       <!-- Metadata Inputs -->
       <section class="settings-card glass-panel" id="settings-section" style="padding: 0.6rem 0.75rem; display: flex; flex-direction: column; gap: 0.5rem;">
         <!-- Room/Gate Code Ingress Banner -->
-        <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(139, 92, 246, 0.06); border: 1px solid var(--border-glow); padding: 0.4rem 0.75rem; border-radius: 6px;">
+        <div id="social-gate-code-row" style="display: flex; justify-content: space-between; align-items: center; background: rgba(139, 92, 246, 0.06); border: 1px solid var(--border-glow); padding: 0.4rem 0.75rem; border-radius: 6px;">
           <div style="display: flex; align-items: center; gap: 0.75rem;">
             <span style="font-size: 0.65rem; color: var(--text-secondary); text-transform: uppercase; font-weight: 700; letter-spacing: 0.05em;">Your Gate Code:</span>
             <div id="gate-code-display" style="font-size: 1.25rem; font-weight: 800; color: var(--cyan-accent); letter-spacing: 0.05em; font-family: monospace; line-height: 1;">----</div>
@@ -45,7 +92,7 @@
           </div>
         </div>
 
-        <div class="input-group">
+        <div class="input-group" id="social-stream-title-group">
           <label for="stream-title">Stream / Project Title</label>
           <input type="text" id="stream-title" value="GOATGATE Engine Development" placeholder="What are you working on..." style="padding: 0.35rem 0.5rem; font-size: 0.8rem;">
         </div>
@@ -69,7 +116,7 @@
       <!-- Control Panels -->
       <section class="controls-panel glass-panel" style="padding: 0.6rem 0.75rem; display: flex; flex-direction: column; gap: 0.45rem;">
         <!-- Live Stream Row -->
-        <div class="control-row">
+        <div class="control-row" id="control-row-stream">
           <div class="control-row-left">
             <span class="label-text">Live Gateway</span>
             <span class="badge" id="stream-badge">OFFLINE</span>

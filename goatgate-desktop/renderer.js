@@ -400,6 +400,47 @@ ipcRenderer.on('state-updated', (event, state) => {
   isRecordingActive = state.isRecording;
   currentGateCode = state.gateCode;
 
+  // Update appMode, auth, and session status
+  const appMode = state.appMode || 'social';
+  updateAppModeUI(appMode);
+
+  if (state.loggedInUser) {
+    btnLogin.style.display = 'none';
+    userInfo.style.display = 'flex';
+    userName.innerText = state.loggedInUser.name;
+    sessionLoginWarning.style.display = 'none';
+    
+    if (state.activeSessionId) {
+      sessionStatusBadge.innerText = 'ACTIVE';
+      sessionStatusBadge.style.background = 'rgba(34, 197, 94, 0.15)';
+      sessionStatusBadge.style.borderColor = 'rgba(34, 197, 94, 0.4)';
+      sessionStatusBadge.style.color = '#4ade80';
+      
+      activeSessionBanner.style.display = 'flex';
+      activeSessionTitle.innerText = state.activeSessionTitle || `Devlog Session`;
+      sessionControls.style.display = 'none';
+    } else {
+      sessionStatusBadge.innerText = 'NO ACTIVE SESSION';
+      sessionStatusBadge.style.background = 'rgba(239, 68, 68, 0.1)';
+      sessionStatusBadge.style.borderColor = 'rgba(239, 68, 68, 0.3)';
+      sessionStatusBadge.style.color = '#f87171';
+      
+      activeSessionBanner.style.display = 'none';
+      sessionControls.style.display = 'flex';
+    }
+  } else {
+    btnLogin.style.display = 'block';
+    userInfo.style.display = 'none';
+    sessionLoginWarning.style.display = 'block';
+    sessionControls.style.display = 'none';
+    activeSessionBanner.style.display = 'none';
+    
+    sessionStatusBadge.innerText = 'NO ACTIVE SESSION';
+    sessionStatusBadge.style.background = 'rgba(239, 68, 68, 0.1)';
+    sessionStatusBadge.style.borderColor = 'rgba(239, 68, 68, 0.3)';
+    sessionStatusBadge.style.color = '#f87171';
+  }
+
   // Diagnostics info
   encoderDiagnostic.innerText = state.detectedEncoder;
   audioDiagnostic.innerText = state.detectedAudioDevice || 'No Audio Device (Video Only)';
@@ -579,4 +620,102 @@ hostChatForm.addEventListener('submit', (e) => {
 vigemDownloadLink.addEventListener('click', (e) => {
   e.preventDefault();
   shell.openExternal('https://github.com/nefarius/ViGEmBus/releases/latest');
+});
+
+// --- GOATGATE Hybrid Mode & Auth Listeners ---
+const btnModeSocial = document.getElementById('btn-mode-social');
+const btnModeSolo = document.getElementById('btn-mode-solo');
+const btnLogin = document.getElementById('btn-login');
+const userInfo = document.getElementById('user-info');
+const userName = document.getElementById('user-name');
+const btnLogout = document.getElementById('btn-logout');
+
+const soloSessionCard = document.getElementById('solo-session-card');
+const sessionStatusBadge = document.getElementById('session-status-badge');
+const sessionLoginWarning = document.getElementById('session-login-warning');
+const sessionControls = document.getElementById('session-controls');
+const activeSessionBanner = document.getElementById('active-session-banner');
+const activeSessionTitle = document.getElementById('active-session-title');
+const btnEndSession = document.getElementById('btn-end-session');
+const devlogTitleInput = document.getElementById('devlog-title');
+const btnStartSession = document.getElementById('btn-start-session');
+
+const socialGateCodeRow = document.getElementById('social-gate-code-row');
+const socialStreamTitleGroup = document.getElementById('social-stream-title-group');
+const controlRowStream = document.getElementById('control-row-stream');
+
+function updateAppModeUI(mode) {
+  if (mode === 'social') {
+    btnModeSocial.classList.add('active');
+    btnModeSocial.style.color = 'white';
+    btnModeSolo.classList.remove('active');
+    btnModeSolo.style.color = 'var(--text-secondary)';
+    
+    socialGateCodeRow.style.display = 'flex';
+    socialStreamTitleGroup.style.display = 'block';
+    controlRowStream.style.display = 'flex';
+    soloSessionCard.style.display = 'none';
+  } else {
+    btnModeSolo.classList.add('active');
+    btnModeSolo.style.color = 'white';
+    btnModeSocial.classList.remove('active');
+    btnModeSocial.style.color = 'var(--text-secondary)';
+    
+    socialGateCodeRow.style.display = 'none';
+    socialStreamTitleGroup.style.display = 'none';
+    controlRowStream.style.display = 'none';
+    soloSessionCard.style.display = 'flex';
+  }
+}
+
+btnModeSocial.addEventListener('click', () => {
+  ipcRenderer.send('set-mode', 'social');
+  updateAppModeUI('social');
+});
+
+btnModeSolo.addEventListener('click', () => {
+  if (isStreamingActive) {
+    stopWebRTCStream();
+  }
+  ipcRenderer.send('set-mode', 'solo');
+  updateAppModeUI('solo');
+});
+
+btnLogin.addEventListener('click', () => {
+  ipcRenderer.send('start-login');
+});
+
+btnLogout.addEventListener('click', () => {
+  ipcRenderer.send('logout');
+});
+
+btnStartSession.addEventListener('click', () => {
+  const title = devlogTitleInput.value.trim();
+  ipcRenderer.send('create-session', { title });
+});
+
+btnEndSession.addEventListener('click', () => {
+  ipcRenderer.send('end-session');
+});
+
+ipcRenderer.on('login-success', () => {
+  ipcRenderer.send('get-state');
+});
+
+ipcRenderer.on('logout-success', () => {
+  ipcRenderer.send('get-state');
+});
+
+ipcRenderer.on('create-session-success', (event, session) => {
+  log(`Devlog session created: ${session.title}`);
+  ipcRenderer.send('get-state');
+});
+
+ipcRenderer.on('create-session-failed', (event, err) => {
+  log(`Failed to create devlog session: ${err}`);
+});
+
+ipcRenderer.on('session-ended', () => {
+  log('Session ended.');
+  ipcRenderer.send('get-state');
 });

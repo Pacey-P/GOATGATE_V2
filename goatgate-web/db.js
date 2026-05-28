@@ -1,11 +1,14 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import crypto from 'crypto';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DB_FILE = path.join(__dirname, 'database.json');
 
 const defaultData = {
+  users: {},
+  devlogSessions: {},
   clips: [],
   screenshots: [],
   gates: {},       // key: GATE_CODE (uppercase), value: { title, developer, isLive, viewerCount, startedAt }
@@ -49,9 +52,51 @@ export function getDb() {
       data.screenshots = [];
       migrated = true;
     }
+    if (!data.users) {
+      data.users = {};
+      migrated = true;
+    }
+    if (!data.devlogSessions) {
+      data.devlogSessions = {};
+      migrated = true;
+    }
+    
+    // Migrate items
+    if (data.clips) {
+      data.clips.forEach(clip => {
+        if (clip.isPublic === undefined) {
+          clip.isPublic = true;
+          migrated = true;
+        }
+        if (clip.userId === undefined) {
+          clip.userId = null;
+          migrated = true;
+        }
+        if (clip.sessionId === undefined) {
+          clip.sessionId = null;
+          migrated = true;
+        }
+      });
+    }
+    if (data.screenshots) {
+      data.screenshots.forEach(snap => {
+        if (snap.isPublic === undefined) {
+          snap.isPublic = true;
+          migrated = true;
+        }
+        if (snap.userId === undefined) {
+          snap.userId = null;
+          migrated = true;
+        }
+        if (snap.sessionId === undefined) {
+          snap.sessionId = null;
+          migrated = true;
+        }
+      });
+    }
     
     if (migrated) {
-      console.log("[DB] Migrated database.json to room-based schema.");
+      console.log("[DB] Migrated database.json to user/session relational schema.");
       writeData(data);
     }
     
@@ -62,6 +107,99 @@ export function getDb() {
   }
 }
 
+// User Operations
+export function upsertUser(googleId, email, name) {
+  const db = getDb();
+  let userId = Object.keys(db.users).find(id => db.users[id].googleId === googleId);
+  if (userId) {
+    db.users[userId].email = email;
+    db.users[userId].name = name;
+  } else {
+    userId = crypto.randomUUID();
+    db.users[userId] = {
+      googleId,
+      email,
+      name,
+      outstandApiKey: ""
+    };
+  }
+  writeData(db);
+  return { id: userId, ...db.users[userId] };
+}
+
+export function updateUserOutstandKey(userId, apiKey) {
+  const db = getDb();
+  if (db.users[userId]) {
+    db.users[userId].outstandApiKey = apiKey;
+    writeData(db);
+    return true;
+  }
+  return false;
+}
+
+export function getUser(userId) {
+  const db = getDb();
+  if (db.users[userId]) {
+    return { id: userId, ...db.users[userId] };
+  }
+  return null;
+}
+
+// Devlog Session Operations
+export function createDevlogSession(userId, title) {
+  const db = getDb();
+  const sessionId = crypto.randomUUID();
+  
+  let formattedTitle = title ? title.trim() : "";
+  if (!formattedTitle) {
+    const now = new Date();
+    const dateStr = now.toISOString().split('T')[0];
+    const timeStr = now.toTimeString().split(' ')[0].substring(0, 5);
+    formattedTitle = `Devlog - ${dateStr} - ${timeStr}`;
+  }
+  
+  db.devlogSessions[sessionId] = {
+    userId,
+    title: formattedTitle,
+    createdAt: new Date().toISOString()
+  };
+  writeData(db);
+  return { id: sessionId, ...db.devlogSessions[sessionId] };
+}
+
+export function getDevlogSessions(userId) {
+  const db = getDb();
+  const sessions = [];
+  for (const [id, session] of Object.entries(db.devlogSessions)) {
+    if (session.userId === userId) {
+      sessions.push({ id, ...session });
+    }
+  }
+  sessions.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  return sessions;
+}
+
+export function getDevlogSession(sessionId) {
+  const db = getDb();
+  return db.devlogSessions[sessionId] || null;
+}
+
+export function publishToGoatFeed(mediaId, mediaType) {
+  const db = getDb();
+  let found = null;
+  if (mediaType === 'video' || mediaType === 'clip' || mediaType === 'dvr') {
+    found = db.clips.find(c => c.id === mediaId);
+  } else if (mediaType === 'image' || mediaType === 'screenshot') {
+    found = db.screenshots.find(s => s.id === mediaId);
+  }
+  
+  if (found) {
+    found.isPublic = true;
+    writeData(db);
+    return found;
+  }
+  return null;
+}
 
 export function saveClip(clip) {
   const db = getDb();

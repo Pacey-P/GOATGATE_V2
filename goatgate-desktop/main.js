@@ -28,6 +28,66 @@ const viewerDpadStates = new Map(); // viewerId -> { up, down, left, right }
 const API_SERVER = 'http://localhost:3001';
 const TEMP_DIR = path.join(app.getPath('temp'), 'goatgate');
 
+let authToken = null;
+let loggedInUser = null;
+let activeSessionId = null;
+let appMode = 'social'; // 'social' or 'solo'
+
+const http = require('http');
+let loopbackServer = null;
+
+function startLoopbackServer() {
+  if (loopbackServer) return;
+  
+  loopbackServer = http.createServer((req, res) => {
+    const urlObj = new URL(req.url, 'http://localhost:3002');
+    if (urlObj.pathname === '/auth-callback') {
+      const token = urlObj.searchParams.get('token');
+      const userStr = urlObj.searchParams.get('user');
+      
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end(`
+        <html>
+          <body style="font-family: sans-serif; background: #0a0a0f; color: #e2e8f0; text-align: center; padding: 50px;">
+            <h1 style="color: #8b5cf6;">Login Successful!</h1>
+            <p>You can close this tab and return to the GOATGATE desktop app.</p>
+          </body>
+        </html>
+      `);
+      
+      if (token && userStr) {
+        const user = JSON.parse(decodeURIComponent(userStr));
+        authToken = token;
+        loggedInUser = user;
+        
+        if (mainWindow) {
+          mainWindow.webContents.send('login-success', { token, user });
+          mainWindow.webContents.send('log-message', `Logged in as ${user.name}`);
+        }
+      }
+      
+      setTimeout(() => {
+        stopLoopbackServer();
+      }, 1000);
+    } else {
+      res.writeHead(404);
+      res.end('Not Found');
+    }
+  });
+  
+  loopbackServer.listen(3002, () => {
+    console.log('[AUTH] Loopback server listening on http://localhost:3002');
+  });
+}
+
+function stopLoopbackServer() {
+  if (loopbackServer) {
+    loopbackServer.close();
+    loopbackServer = null;
+    console.log('[AUTH] Loopback server stopped.');
+  }
+}
+
 if (!fs.existsSync(TEMP_DIR)) {
   fs.mkdirSync(TEMP_DIR, { recursive: true });
 }
@@ -405,17 +465,31 @@ async function uploadFile(filePath, filename, title, developer, type, tags = ['G
   form.append('title', title);
   form.append('developer', developer);
   form.append('type', type);
-  form.append('gateCode', gateCode);
+  
+  if (appMode === 'social') {
+    form.append('gateCode', gateCode);
+  } else {
+    if (activeSessionId) {
+      form.append('sessionId', activeSessionId);
+    }
+    form.append('isPublic', 'false');
+  }
 
   form.append('tags', JSON.stringify(tags));
 
   const endpoint = type === 'screenshot' ? '/api/screenshots' : '/api/clips';
   
+  const headers = {
+    ...form.getHeaders()
+  };
+  
+  if (authToken) {
+    headers['Authorization'] = `Bearer ${authToken}`;
+  }
+  
   console.log(`[UPLOAD] Uploading to ${API_SERVER}${endpoint}...`);
   await axios.post(`${API_SERVER}${endpoint}`, form, {
-    headers: {
-      ...form.getHeaders()
-    },
+    headers: headers,
     maxContentLength: Infinity,
     maxBodyLength: Infinity
   });
@@ -644,6 +718,55 @@ ipcMain.on('get-state', (event) => {
     detectedEncoder,
     detectedAudioDevice,
     gateCode,
-    isVigemConnected
+    isVigemConnected,
+    authToken,
+    loggedInUser,
+    activeSessionId,
+    appMode
   });
+});
+
+ipcMain.on('start-login', () => {
+  startLoopbackServer();
+  const { shell } = require('electron');
+  shell.openExternal(`${API_SERVER}/api/auth/google?clientType=desktop`);
+});
+
+ipcMain.on('logout', () => {
+  authToken = null;
+  loggedInUser = null;
+  activeSessionId = null;
+  if (mainWindow) {
+    mainWindow.webContents.send('logout-success');
+    mainWindow.webContents.send('log-message', 'Logged out.');
+  }
+});
+
+ipcMain.on('set-mode', (event, mode) => {
+  appMode = mode;
+  console.log(`[MODE] Switched to ${mode}`);
+});
+
+ipcMain.on('create-session', async (event, { title }) => {
+  if (!authToken) {
+    event.reply('create-session-failed', 'Not authenticated');
+    return;
+  }
+  try {
+    const res = await axios.post(`${API_SERVER}/api/devlogs`, { title }, {
+      headers: { 'Authorization': `Bearer ${authToken}` }
+    });
+    activeSessionId = res.data.id;
+    event.reply('create-session-success', res.data);
+    mainWindow.webContents.send('log-message', `Devlog session started: ${res.data.title}`);
+  } catch (err) {
+    console.error('Failed to create devlog session:', err);
+    event.reply('create-session-failed', err.message);
+  }
+});
+
+ipcMain.on('end-session', (event) => {
+  activeSessionId = null;
+  event.reply('session-ended');
+  mainWindow.webContents.send('log-message', 'Devlog session ended.');
 });
