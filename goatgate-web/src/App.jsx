@@ -60,7 +60,9 @@ export default function App() {
 
   // Set up WebSocket Connection ONCE (empty dependency array)
   useEffect(() => {
-    const ws = new WebSocket(`ws://${window.location.hostname}:3001`);
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsHost = window.location.port ? `${window.location.hostname}:3001` : window.location.host;
+    const ws = new WebSocket(`${wsProtocol}//${wsHost}`);
     wsRef.current = ws;
 
     ws.onmessage = (event) => {
