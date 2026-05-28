@@ -1,0 +1,25 @@
+# Dependency directories
+**/node_modules/
+
+# Build outputs
+**/dist/
+**/build/
+out/
+
+# Local databases and dynamic server uploads
+**/database.json
+**/database.json.tmp
+**/uploads/*
+!**/uploads/.gitkeep
+
+# Temp files in desktop client
+**/goatgate/
+
+# Logs
+*.log
+*.log.*
+npm-debug.log*
+
+# System files
+.DS_Store
+Thumbs.db

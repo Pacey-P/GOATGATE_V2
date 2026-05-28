@@ -1,0 +1,18 @@
+{
+  "name": "goatgate-desktop",
+  "version": "1.0.0",
+  "description": "GOATGATE Desktop capture and streaming client",
+  "main": "main.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "electron ."
+  },
+  "dependencies": {
+    "axios": "^1.7.2",
+    "form-data": "^4.0.0",
+    "vigemclient": "^1.5.3"
+  },
+  "devDependencies": {
+    "electron": "^30.0.9"
+  }
+}
