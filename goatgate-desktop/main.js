@@ -25,7 +25,7 @@ const virtualControllers = new Map(); // viewerId -> X360Controller
 const viewerDpadStates = new Map(); // viewerId -> { up, down, left, right }
 
 
-const API_SERVER = 'http://localhost:3001';
+const API_SERVER = 'https://goatgate.app';
 const TEMP_DIR = path.join(app.getPath('temp'), 'goatgate');
 
 const CONFIG_FILE = path.join(app.getPath('userData'), 'config.json');

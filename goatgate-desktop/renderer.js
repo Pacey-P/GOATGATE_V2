@@ -146,7 +146,7 @@ async function startWebRTCStream() {
     log('Local video stream captured successfully at 60 FPS.');
     
     // Connect signaling WS
-    ws = new WebSocket('ws://localhost:3001');
+    ws = new WebSocket('wss://goatgate.app');
     
     ws.onopen = () => {
       log('Signaling WebSocket connected.');
