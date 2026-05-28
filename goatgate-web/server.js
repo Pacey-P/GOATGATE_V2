@@ -138,7 +138,7 @@ if (fs.existsSync(DIST_DIR)) {
 }
 
 // Setup HTTP & WebSocket Server
-const HTTP_PORT = 3001;
+const HTTP_PORT = process.env.PORT || 3001;
 const httpServer = http.createServer(app);
 const wss = new WebSocketServer({ server: httpServer });
 
